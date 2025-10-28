@@ -49,7 +49,7 @@ def parse_date_dayfirst(s: pd.Series) -> pd.Series:
     date_formats = [
         "%d-%m-%Y", "%d/%m/%Y", "%d %m %Y", # Day-Month-Year variations
         "%Y-%m-%d", "%Y/%m/%d", "%Y %m %d", # Year-Month-Day variations
-        "%m-%d-%Y", "%m/%d/%Y", "%m %d %Y"  # Month-Day-Year variations
+        "%m-%d-%Y", "%m/%d-%Y", "%m %d %Y"  # Month-Day-Year variations
     ]
     
     for fmt in date_formats:
@@ -72,22 +72,37 @@ def parse_date_dayfirst(s: pd.Series) -> pd.Series:
 
 def build_right_from_nos(row: pd.Series) -> str:
     """
-    Xây dựng chuỗi "Right" bằng cách lấy chữ số hàng đơn vị từ các cột NO_COLS.
+    Xây dựng chuỗi "Right" bằng cách trích xuất tất cả các chữ số từ các cột NO_COLS.
+    Mỗi giá trị số được xử lý như một số gồm 2 chữ số (thêm 0 nếu là 1 chữ số).
+    Ví dụ: '15' -> '1', '5'; '7' -> '0', '7'.
+    Nếu giá trị có nhiều hơn 2 chữ số (ví dụ '123'), chỉ lấy 2 chữ số cuối (ví dụ '2', '3').
     """
-    right_digits = []
+    all_extracted_digits = []
     for col in NO_COLS:
-        val = str(row.get(col, '')).strip()
-        if val:
-            try:
-                # Try converting to int and taking modulo 10
-                digit = str(int(float(val)) % 10)
-                right_digits.append(digit)
-            except ValueError:
-                # If not a simple number, extract last digit from any numbers found in string
-                numbers_in_string = re.findall(r'\d', val)
-                if numbers_in_string:
-                    right_digits.append(numbers_in_string[-1]) # Take the last digit found
-    return "".join(right_digits)
+        val_str = str(row.get(col, '')).strip()
+        if val_str:
+            # Try to find a numeric sequence in the string
+            match = re.search(r'\d+', val_str)
+            if match:
+                num_str_found = match.group(0)
+                
+                # If the number found is longer than 2 digits, take the last two.
+                # Otherwise, use the number as is.
+                if len(num_str_found) > 2:
+                    num_to_process = num_str_found[-2:]
+                else:
+                    num_to_process = num_str_found
+                
+                try:
+                    # Convert to int, then format as a two-digit string (e.g., 7 -> "07", 15 -> "15")
+                    formatted_num_str = f"{int(num_to_process):02d}"
+                    # Append individual digits
+                    all_extracted_digits.extend(list(formatted_num_str))
+                except ValueError:
+                    # If int conversion fails for num_to_process (shouldn't happen if regex is fine), skip
+                    pass
+    return "".join(all_extracted_digits)
+
 
 def count_digits_from_right(right_str: str) -> dict:
     """
@@ -100,6 +115,8 @@ def count_digits_from_right(right_str: str) -> dict:
 def make_rows_for_date(date_val: pd.Timestamp, counts: dict) -> list:
     """
     Sinh 10 hàng dữ liệu báo cáo cho một ngày cụ thể dựa trên tần suất chữ số.
+    Luôn tạo ra 10 dòng dữ liệu mới cho mỗi ngày (5 Min, 5 Max), 
+    với các dòng trống được điền Freq=0, Count=0 và các chữ số=0.
     """
     output_rows = []
     
@@ -107,20 +124,20 @@ def make_rows_for_date(date_val: pd.Timestamp, counts: dict) -> list:
     freq_series = pd.Series(counts)
     
     # Get unique frequencies and sort them
-    unique_freqs = sorted(freq_series.unique())
+    unique_freqs = sorted(freq_series.unique()) # Sorted unique frequencies found in 'counts'
     
     # Prepare labels for Min and Max rows
     min_labels = [f"Min{i}" for i in range(1, 6)]
     max_labels = [f"Max{i}" for i in range(1, 6)]
     
-    def make_row(label: str, freq: int) -> dict:
+    # Helper to create a regular row based on a specific frequency
+    def create_actual_row(label: str, freq: int) -> dict:
         row_data = {
             "Date": date_val,
             "CB": label,
             "Freq": freq,
-            "Count": 0 # This will be updated below
+            "Count": 0
         }
-        # Initialize digit columns to 0
         for d in range(10):
             row_data[str(d)] = 0
             
@@ -128,18 +145,39 @@ def make_rows_for_date(date_val: pd.Timestamp, counts: dict) -> list:
         row_data["Count"] = len(digits_at_freq)
         
         for d in digits_at_freq:
-            row_data[str(d)] = 1 # Mark the digit if it has this frequency
-        
+            row_data[str(d)] = 1
+        return row_data
+
+    # Helper to create a placeholder row when fewer than 5 unique frequencies exist
+    def create_placeholder_row(label: str) -> dict:
+        row_data = {
+            "Date": date_val,
+            "CB": label,
+            "Freq": 0, # Placeholder frequency
+            "Count": 0  # Placeholder count
+        }
+        for d in range(10):
+            row_data[str(d)] = 0 # All digits are 0
         return row_data
 
     # Create 5 MinX rows (lowest frequencies)
-    for i in range(min(5, len(unique_freqs))):
-        output_rows.append(make_row(min_labels[i], unique_freqs[i]))
+    for i in range(5):
+        if i < len(unique_freqs):
+            output_rows.append(create_actual_row(min_labels[i], unique_freqs[i]))
+        else:
+            output_rows.append(create_placeholder_row(min_labels[i]))
     
     # Create 5 MaxX rows (highest frequencies)
     # Iterate in reverse for highest frequencies
-    for i in range(min(5, len(unique_freqs))):
-        output_rows.append(make_row(max_labels[i], unique_freqs[len(unique_freqs) - 1 - i]))
+    for i in range(5):
+        if i < len(unique_freqs):
+            # Calculate the index for the 'i'-th highest frequency
+            # For i=0, it's the highest: unique_freqs[len(unique_freqs)-1]
+            # For i=1, it's the second highest: unique_freqs[len(unique_freqs)-2]
+            freq_idx = len(unique_freqs) - 1 - i
+            output_rows.append(create_actual_row(max_labels[i], unique_freqs[freq_idx]))
+        else:
+            output_rows.append(create_placeholder_row(max_labels[i]))
         
     return output_rows
 
@@ -202,10 +240,8 @@ def load_csv(path: Path) -> pd.DataFrame:
             df[col] = ''
 
     # --- "Right" Column Processing ---
-    if "Right" not in df.columns:
-        df["Right"] = df.apply(build_right_from_nos, axis=1)
-    else:
-        df["Right"] = df["Right"].astype(str).str.strip() # Ensure it's string and clean
+    # Always rebuild "Right" column based on the new logic
+    df["Right"] = df.apply(build_right_from_nos, axis=1)
 
     # Final cleanup: Remove rows where "Date" could not be parsed
     df.dropna(subset=["Date"], inplace=True)
