@@ -86,6 +86,10 @@ def load_csv(file_stream) -> pd.DataFrame:
         df = df[~df['STT'].astype(str).str.contains(r'^(STT|No\.?)$', regex=True, na=False)]
         df = df.reset_index(drop=True) # Reset index after dropping rows
 
+    # --- FIX: Add check for empty DataFrame after initial processing to prevent ZeroDivisionError ---
+    if df.empty:
+        raise ValueError("The uploaded CSV file is empty or contains no valid data rows after initial processing.")
+
     # Process 'Date' column
     if 'Date' in df.columns:
         df['Date'] = parse_date_dayfirst(df['Date'])
@@ -96,7 +100,7 @@ def load_csv(file_stream) -> pd.DataFrame:
             # Avoid re-parsing already known numeric columns or 'Right'
             if col not in NO_COLS and col != 'Right': 
                 parsed_col = parse_date_dayfirst(df[col])
-                valid_date_ratio = parsed_col.notna().sum() / len(df)
+                valid_date_ratio = parsed_col.notna().sum() / len(df) # len(df) could be 0 here if df is empty
                 if valid_date_ratio > 0.5: # Must have more than 50% valid dates
                     date_candidates[col] = valid_date_ratio
                     df[col] = parsed_col # Temporarily assign parsed dates to the column
@@ -243,12 +247,12 @@ def process_csv_endpoint():
         )
 
     except ValueError as e:
-        # Catch specific data processing errors
+        # Catch specific data processing errors and return a 400 with the error message
         return jsonify({"error": str(e)}), 400
     except Exception as e:
-        # Catch any other unexpected errors
+        # Catch any other unexpected errors, log them, and return a generic 500 error
         app.logger.error(f"An unexpected error occurred: {e}", exc_info=True)
-        return jsonify({"error": "An internal server error occurred during processing."}), 500
+        return jsonify({"error": "An internal server error occurred during processing. Please check the CSV format or contact support."}), 500
 
 if __name__ == '__main__':
     # For local development
