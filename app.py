@@ -328,10 +328,19 @@ def upload_and_process_file():
     try:
         # Create a unique temporary file for the uploaded input CSV
         with tempfile.NamedTemporaryFile(delete=False, suffix=".csv", dir=TEMP_DIR) as tmp_input_file:
-            file.save(tmp_input_file.name)
+            # IMPORTANT FIX: Save the uploaded file content directly to the temporary file object.
+            # This ensures the file stream is properly managed, flushed, and closed by the 'with' statement,
+            # preventing potential 'FileNotFoundError' issues when pd.read_csv tries to access it later.
+            file.save(tmp_input_file)
             temp_input_path = Path(tmp_input_file.name)
+        
         app_logger.info(f"Input file saved temporarily: {temp_input_path}")
         
+        # Add an explicit check for the file's existence after saving and closing
+        if not temp_input_path.exists():
+            app_logger.error(f"Temporary input file unexpectedly missing after saving: {temp_input_path}")
+            raise FileNotFoundError(f"Failed to save uploaded file: {temp_input_path} was not found on disk.")
+
         # Load and preprocess the CSV using the adapted function
         df = load_csv_for_flask(temp_input_path)
 
