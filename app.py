@@ -158,14 +158,10 @@ def count_digits_from_right(right_str: str) -> dict:
 def make_rows_for_date(date_val: pd.Timestamp, counts: dict) -> list:
     """
     Generates 10 output rows (Min1-Min5, Max1-Max5) for a given date
-    and digit frequencies.
+    and digit frequencies, including Freq=0 for Min rows.
     """
-    # Convert counts to a Series for easier manipulation
     counts_series = pd.Series(counts, dtype=int)
     
-    # Filter out digits that don't appear (count is 0)
-    actual_counts = counts_series[counts_series > 0]
-
     all_output_rows = []
 
     def make_row(date, cb_label, freq, digits_at_freq):
@@ -173,40 +169,56 @@ def make_rows_for_date(date_val: pd.Timestamp, counts: dict) -> list:
             'Date': date,
             'CB': cb_label,
             'Freq': freq,
-            'Count': len(digits_at_freq) if digits_at_freq else '' # Empty if no digits
+            'Count': len(digits_at_freq) if digits_at_freq else ''
         }
         for d in range(10):
             row_data[str(d)] = str(d) if str(d) in digits_at_freq else ''
         return row_data
 
-    # Prepare unique frequencies
-    if actual_counts.empty:
-        min_freqs = pd.Series([], dtype=int)
-        max_freqs = pd.Series([], dtype=int)
-    else:
-        unique_freqs = actual_counts.value_counts().sort_index()
-        min_freqs = unique_freqs.index.sort_values(ascending=True)
-        max_freqs = unique_freqs.index.sort_values(ascending=False)
+    # --- Generate Min rows (including Freq=0) ---
+    # Group digits by their frequencies, considering all 0-9 digits
+    freq_to_digits = {}
+    for digit in range(10):
+        freq = counts_series.get(str(digit), 0) # Ensure all digits 0-9 are covered
+        if freq not in freq_to_digits:
+            freq_to_digits[freq] = []
+        freq_to_digits[freq].append(str(digit))
+    
+    sorted_min_freqs = sorted(freq_to_digits.keys()) # This will include 0 if present
 
-    # Generate Min rows
     min_counter = 1
-    for freq in min_freqs:
+    for freq in sorted_min_freqs:
         if min_counter > 5: break
-        digits_at_freq = actual_counts[actual_counts == freq].index.tolist()
+        digits_at_freq = sorted(freq_to_digits[freq]) # Sort digits for consistent output
         all_output_rows.append(make_row(date_val, f'Min{min_counter}', freq, digits_at_freq))
         min_counter += 1
+    
     # Fill remaining Min rows if less than 5 unique frequencies
     while min_counter <= 5:
         all_output_rows.append(make_row(date_val, f'Min{min_counter}', '', []))
         min_counter += 1
 
-    # Generate Max rows
+    # --- Generate Max rows (only considering frequencies > 0) ---
+    actual_counts = counts_series[counts_series > 0] # Max rows still only care about present digits
+    
+    if actual_counts.empty:
+        max_freqs_values = []
+    else:
+        # Group digits with actual_counts > 0
+        max_freq_to_digits = {}
+        for digit, freq in actual_counts.items():
+            if freq not in max_freq_to_digits:
+                max_freq_to_digits[freq] = []
+            max_freq_to_digits[freq].append(digit)
+        max_freqs_values = sorted(max_freq_to_digits.keys(), reverse=True) # Sort frequencies descending
+
     max_counter = 1
-    for freq in max_freqs:
+    for freq in max_freqs_values:
         if max_counter > 5: break
-        digits_at_freq = actual_counts[actual_counts == freq].index.tolist()
+        digits_at_freq = sorted(max_freq_to_digits[freq])
         all_output_rows.append(make_row(date_val, f'Max{max_counter}', freq, digits_at_freq))
         max_counter += 1
+    
     # Fill remaining Max rows if less than 5 unique frequencies
     while max_counter <= 5:
         all_output_rows.append(make_row(date_val, f'Max{max_counter}', '', []))
